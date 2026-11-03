@@ -1,0 +1,1810 @@
+openapi: 3.0.3
+
+info:
+  title: SwiftWash API
+  version: 1.0.0
+  description: |
+    REST API for **SwiftWash: Online Laundry Pickup and Delivery**.
+
+    SwiftWash lets XU students in Cagayan de Oro City book laundry pick-up and delivery
+    from nearby partner laundromats. Partners accept and process orders, riders update
+    pickup and delivery status, and every order can be tracked from booking to drop-off.
+
+    **Roles:** `customer`, `partner`, `rider`, `admin`. Most routes require a JWT bearer
+    token. Each route's description states which roles may call it.
+
+    **Order status flow:** `pending` -> `confirmed` -> `inprogress` -> `completed`
+    (an order may be moved to `cancelled` while it is `pending` or `confirmed`).
+
+    This file documents only the SwiftWash backend. Map display and address geocoding are
+    done by the frontend, which sends the resulting `latitude` and `longitude` to this API.
+
+    **Group:** Tomines and friends. Members: Jezriel Raphael Sia, Floyd Tomines,
+    Ethan Kyle C. Anggot, and John Ryan Uy.
+  contact:
+    name: Tomines and friends
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:5000/api/v1
+    description: Local development server
+
+
+tags:
+  - name: Auth
+    description: Registration and login (module lead - Floyd Tomines)
+  - name: Users
+    description: User accounts, profiles, and admin user management (Floyd Tomines)
+  - name: Orders
+    description: Laundry order booking, tracking, and status updates (Ethan Anggot, Floyd Tomines)
+  - name: Partners
+    description: Partner laundromat profiles and admin approval (Ethan Anggot, Jezriel Sia)
+  - name: Services
+    description: Services (wash, dry, fold) and prices offered by partners (Ethan Anggot)
+  - name: Reviews
+    description: Ratings and reviews for partner laundromats (Floyd Tomines)
+  - name: Rider
+    description: Rider assignment and delivery workflow (Jezriel Sia)
+
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new account
+      description: |
+        Creates a new user. Public registration is allowed for the roles `customer`,
+        `partner`, and `rider`. The `admin` role cannot be self-assigned.
+      operationId: registerUser
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+            example:
+              role: customer
+              name: Maria Santos
+              email: maria.santos@xu.edu.ph
+              password: Str0ngPass!23
+              address:
+                street: Corrales Ave, Brgy. Carmen
+                city: Cagayan de Oro
+                latitude: 8.4822
+                longitude: 124.6472
+      responses:
+        '201':
+          description: Account created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+              example:
+                token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.example.signature
+                user:
+                  id: 665f1c2e9b1e8a0012a4b3c1
+                  role: customer
+                  name: Maria Santos
+                  email: maria.santos@xu.edu.ph
+                  address:
+                    street: Corrales Ave, Brgy. Carmen
+                    city: Cagayan de Oro
+                    latitude: 8.4822
+                    longitude: 124.6472
+                  createdAt: '2026-11-03T08:15:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in and receive a JWT
+      description: Verifies the email and password and returns a bearer token for later requests.
+      operationId: loginUser
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              email: maria.santos@xu.edu.ph
+              password: Str0ngPass!23
+      responses:
+        '200':
+          description: Login successful.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+              example:
+                token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.example.signature
+                user:
+                  id: 665f1c2e9b1e8a0012a4b3c1
+                  role: customer
+                  name: Maria Santos
+                  email: maria.santos@xu.edu.ph
+                  createdAt: '2026-11-03T08:15:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /users:
+    get:
+      tags: [Users]
+      summary: List users
+      description: Returns a paginated list of users. **Admin only.**
+      operationId: listUsers
+      parameters:
+        - name: role
+          in: query
+          description: Filter by role.
+          schema:
+            $ref: '#/components/schemas/Role'
+        - name: search
+          in: query
+          description: Case-insensitive match on name or email.
+          schema:
+            type: string
+            example: santos
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of users.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /users/me:
+    get:
+      tags: [Users]
+      summary: Get the logged-in user's profile
+      description: Returns the profile of the user who owns the bearer token.
+      operationId: getCurrentUser
+      responses:
+        '200':
+          description: The current user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /users/{userId}:
+    parameters:
+      - $ref: '#/components/parameters/UserId'
+    get:
+      tags: [Users]
+      summary: Get a user by ID
+      description: Returns one user. **Admin only**, or the user themselves.
+      operationId: getUser
+      responses:
+        '200':
+          description: The user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Users]
+      summary: Update a user
+      description: |
+        Updates a user's name, address, or password. A user may update only their own
+        profile. **Admins** may update any user and may also change `role`.
+      operationId: updateUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdate'
+            example:
+              name: Maria S. Santos
+              address:
+                street: Hayes St, Brgy. Nazareth
+                city: Cagayan de Oro
+                latitude: 8.4871
+                longitude: 124.6521
+      responses:
+        '200':
+          description: The updated user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    delete:
+      tags: [Users]
+      summary: Delete a user
+      description: Permanently removes a user account. **Admin only.**
+      operationId: deleteUser
+      responses:
+        '204':
+          description: User deleted. No content.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /partners:
+    get:
+      tags: [Partners]
+      summary: List partner laundromats
+      description: |
+        Returns a paginated list of partner laundromats. Used for the partner list and map
+        pins. Supports search, a minimum-rating filter, and a nearby search by coordinates.
+        Public route.
+      operationId: listPartners
+      security: []
+      parameters:
+        - name: search
+          in: query
+          description: Case-insensitive match on business name.
+          schema:
+            type: string
+            example: bubble
+        - name: minRating
+          in: query
+          description: Only return partners with an average rating at or above this value.
+          schema:
+            type: number
+            minimum: 1
+            maximum: 5
+            example: 4
+        - name: lat
+          in: query
+          description: Latitude of the search center. Use together with `lng` and `radiusKm`.
+          schema:
+            type: number
+            format: double
+            example: 8.4822
+        - name: lng
+          in: query
+          description: Longitude of the search center.
+          schema:
+            type: number
+            format: double
+            example: 124.6472
+        - name: radiusKm
+          in: query
+          description: Search radius in kilometers.
+          schema:
+            type: number
+            minimum: 0.1
+            default: 5
+        - name: isApproved
+          in: query
+          description: Filter by admin approval status. Non-admin callers always receive approved partners only.
+          schema:
+            type: boolean
+        - name: sort
+          in: query
+          description: Sort order.
+          schema:
+            type: string
+            enum: [rating, -rating, businessName, -createdAt]
+            default: -rating
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of partners.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerList'
+              example:
+                data:
+                  - id: 665f2a7b9b1e8a0012a4b4d2
+                    userId: 665f1d419b1e8a0012a4b3c9
+                    businessName: Bubble Express Laundry
+                    description: Wash, dry, and fold near XU main gate.
+                    location:
+                      street: Don Apolinar Velez St
+                      city: Cagayan de Oro
+                      latitude: 8.4786
+                      longitude: 124.6471
+                    rating: 4.6
+                    ratingCount: 38
+                    isApproved: true
+                    createdAt: '2026-10-01T09:00:00Z'
+                meta:
+                  page: 1
+                  limit: 10
+                  total: 1
+                  totalPages: 1
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    post:
+      tags: [Partners]
+      summary: Create a partner profile
+      description: |
+        Creates a laundromat profile linked to the logged-in user. **Partner role only**
+        (one profile per user). New profiles start with `isApproved: false` until an admin
+        approves them.
+      operationId: createPartner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PartnerInput'
+            example:
+              businessName: Bubble Express Laundry
+              description: Wash, dry, and fold near XU main gate.
+              location:
+                street: Don Apolinar Velez St
+                city: Cagayan de Oro
+                latitude: 8.4786
+                longitude: 124.6471
+      responses:
+        '201':
+          description: Partner created.
+          headers:
+            Location:
+              description: URL of the new partner.
+              schema:
+                type: string
+                example: /api/v1/partners/665f2a7b9b1e8a0012a4b4d2
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Partner'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /partners/{partnerId}:
+    parameters:
+      - $ref: '#/components/parameters/PartnerId'
+    get:
+      tags: [Partners]
+      summary: Get a partner by ID
+      description: Returns one partner laundromat. Public route.
+      operationId: getPartner
+      security: []
+      responses:
+        '200':
+          description: The partner.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Partner'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Partners]
+      summary: Update a partner
+      description: |
+        Replaces the editable fields of a partner. Allowed for the owning partner and
+        admins. Only admins may change `isApproved`.
+      operationId: updatePartner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PartnerInput'
+            example:
+              businessName: Bubble Express Laundry & Dry Clean
+              description: Now open until 10 PM.
+              location:
+                street: Don Apolinar Velez St
+                city: Cagayan de Oro
+                latitude: 8.4786
+                longitude: 124.6471
+              isApproved: true
+      responses:
+        '200':
+          description: The updated partner.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Partner'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    delete:
+      tags: [Partners]
+      summary: Delete a partner
+      description: |
+        Removes a partner and its services. Allowed for admins and the owning partner.
+        Fails with `409` if the partner still has unfinished orders.
+      operationId: deletePartner
+      responses:
+        '204':
+          description: Partner deleted. No content.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /partners/{partnerId}/services:
+    parameters:
+      - $ref: '#/components/parameters/PartnerId'
+    get:
+      tags: [Partners, Services]
+      summary: List the services of one partner
+      description: Shortcut for `GET /services?partnerId={partnerId}`. Public route.
+      operationId: listPartnerServices
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of services.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceList'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /partners/{partnerId}/reviews:
+    parameters:
+      - $ref: '#/components/parameters/PartnerId'
+    get:
+      tags: [Partners, Reviews]
+      summary: List the reviews of one partner
+      description: Shortcut for `GET /reviews?partnerId={partnerId}`. Public route.
+      operationId: listPartnerReviews
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of reviews.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewList'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /services:
+    get:
+      tags: [Services]
+      summary: List services
+      description: Returns a paginated list of services and prices. Public route.
+      operationId: listServices
+      security: []
+      parameters:
+        - name: partnerId
+          in: query
+          description: Only services offered by this partner.
+          schema:
+            $ref: '#/components/schemas/ObjectId'
+        - name: type
+          in: query
+          description: Filter by service type.
+          schema:
+            $ref: '#/components/schemas/ServiceType'
+        - name: maxPrice
+          in: query
+          description: Only services priced at or below this amount (PHP).
+          schema:
+            type: number
+            minimum: 0
+            example: 100
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of services.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceList'
+              example:
+                data:
+                  - id: 665f2b3c9b1e8a0012a4b5e7
+                    partnerId: 665f2a7b9b1e8a0012a4b4d2
+                    type: wash
+                    name: Wash per kilo
+                    price: 45
+                    unit: kg
+                    isAvailable: true
+                meta:
+                  page: 1
+                  limit: 10
+                  total: 1
+                  totalPages: 1
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    post:
+      tags: [Services]
+      summary: Create a service
+      description: Adds a service to the logged-in partner's laundromat. **Partner role only.**
+      operationId: createService
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceInput'
+            example:
+              type: wash
+              name: Wash per kilo
+              price: 45
+              unit: kg
+              isAvailable: true
+      responses:
+        '201':
+          description: Service created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Service'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /services/{serviceId}:
+    parameters:
+      - $ref: '#/components/parameters/ServiceId'
+    get:
+      tags: [Services]
+      summary: Get a service by ID
+      description: Returns one service. Public route.
+      operationId: getService
+      security: []
+      responses:
+        '200':
+          description: The service.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Service'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Services]
+      summary: Update a service
+      description: Updates a service. Allowed for the owning partner and admins.
+      operationId: updateService
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceInput'
+            example:
+              type: wash
+              name: Wash per kilo
+              price: 50
+              unit: kg
+              isAvailable: true
+      responses:
+        '200':
+          description: The updated service.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Service'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    delete:
+      tags: [Services]
+      summary: Delete a service
+      description: Removes a service. Allowed for the owning partner and admins. Existing orders keep their embedded copy of the item.
+      operationId: deleteService
+      responses:
+        '204':
+          description: Service deleted. No content.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /orders:
+    get:
+      tags: [Orders]
+      summary: List orders
+      description: |
+        Returns a paginated list of orders, scoped by the caller's role:
+        - **customer** sees only their own orders
+        - **partner** sees orders for their laundromat
+        - **rider** sees orders assigned to them
+        - **admin** sees all orders
+      operationId: listOrders
+      parameters:
+        - name: status
+          in: query
+          description: Filter by order status.
+          schema:
+            $ref: '#/components/schemas/OrderStatus'
+        - name: partnerId
+          in: query
+          description: Filter by partner (admin only).
+          schema:
+            $ref: '#/components/schemas/ObjectId'
+        - name: riderId
+          in: query
+          description: Filter by assigned rider (admin or partner).
+          schema:
+            $ref: '#/components/schemas/ObjectId'
+        - name: pickupFrom
+          in: query
+          description: Only orders with a pickup date on or after this date.
+          schema:
+            type: string
+            format: date
+            example: '2026-11-01'
+        - name: pickupTo
+          in: query
+          description: Only orders with a pickup date on or before this date.
+          schema:
+            type: string
+            format: date
+            example: '2026-11-30'
+        - name: sort
+          in: query
+          description: Sort order.
+          schema:
+            type: string
+            enum: [createdAt, -createdAt, pickupDate, -pickupDate]
+            default: -createdAt
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of orders.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Orders]
+      summary: Book a new order
+      description: |
+        Creates a laundry order with embedded items, a pickup and delivery schedule, and
+        special instructions. **Customer role only.** The order starts as `pending` and
+        the server computes `totalPrice` from the item prices.
+      operationId: createOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderCreate'
+            example:
+              partnerId: 665f2a7b9b1e8a0012a4b4d2
+              items:
+                - serviceId: 665f2b3c9b1e8a0012a4b5e7
+                  description: Mixed clothes
+                  quantity: 4
+              pickupDate: '2026-11-05T09:00:00Z'
+              deliveryDate: '2026-11-06T17:00:00Z'
+              pickupAddress:
+                street: Corrales Ave, Brgy. Carmen
+                city: Cagayan de Oro
+                latitude: 8.4822
+                longitude: 124.6472
+              specialInstructions: Please use fragrance-free detergent. Call on arrival.
+      responses:
+        '201':
+          description: Order created.
+          headers:
+            Location:
+              description: URL of the new order.
+              schema:
+                type: string
+                example: /api/v1/orders/665f3c8d9b1e8a0012a4b6f3
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+              example:
+                id: 665f3c8d9b1e8a0012a4b6f3
+                customerId: 665f1c2e9b1e8a0012a4b3c1
+                partnerId: 665f2a7b9b1e8a0012a4b4d2
+                riderId: null
+                items:
+                  - serviceId: 665f2b3c9b1e8a0012a4b5e7
+                    type: wash
+                    name: Wash per kilo
+                    description: Mixed clothes
+                    quantity: 4
+                    unitPrice: 45
+                    subtotal: 180
+                pickupDate: '2026-11-05T09:00:00Z'
+                deliveryDate: '2026-11-06T17:00:00Z'
+                pickupAddress:
+                  street: Corrales Ave, Brgy. Carmen
+                  city: Cagayan de Oro
+                  latitude: 8.4822
+                  longitude: 124.6472
+                specialInstructions: Please use fragrance-free detergent. Call on arrival.
+                status: pending
+                totalPrice: 180
+                createdAt: '2026-11-03T08:30:00Z'
+                updatedAt: '2026-11-03T08:30:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /orders/{orderId}:
+    parameters:
+      - $ref: '#/components/parameters/OrderId'
+    get:
+      tags: [Orders]
+      summary: Get an order by ID
+      description: Returns one order, including its embedded items and current status. Only the customer, partner, or rider on the order, or an admin, may view it.
+      operationId: getOrder
+      responses:
+        '200':
+          description: The order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Orders]
+      summary: Update an order's booking details
+      description: |
+        Changes the items, schedule, address, or instructions of an order. The customer who
+        owns the order may do this only while it is `pending`. Admins may edit at any time.
+        Use `PATCH /orders/{orderId}/status` to change the status.
+      operationId: updateOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderUpdate'
+            example:
+              items:
+                - serviceId: 665f2b3c9b1e8a0012a4b5e7
+                  description: Mixed clothes and bedsheets
+                  quantity: 6
+              pickupDate: '2026-11-05T10:00:00Z'
+              deliveryDate: '2026-11-06T17:00:00Z'
+              pickupAddress:
+                street: Corrales Ave, Brgy. Carmen
+                city: Cagayan de Oro
+                latitude: 8.4822
+                longitude: 124.6472
+              specialInstructions: Add extra rinse.
+      responses:
+        '200':
+          description: The updated order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    delete:
+      tags: [Orders]
+      summary: Delete an order
+      description: |
+        Removes an order record. The owning customer may delete only `pending` or
+        `cancelled` orders. Admins may delete any order. To cancel an active order, use
+        `PATCH /orders/{orderId}/status` with `cancelled` instead.
+      operationId: deleteOrder
+      responses:
+        '204':
+          description: Order deleted. No content.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /orders/{orderId}/status:
+    parameters:
+      - $ref: '#/components/parameters/OrderId'
+    patch:
+      tags: [Orders, Rider]
+      summary: Update the status of an order
+      description: |
+        Moves an order to its next status.
+        - **partner**: `pending` -> `confirmed` -> `inprogress` -> `completed`, or `cancelled`
+        - **rider**: may mark pickup and delivery progress on orders assigned to them
+        - **customer**: may only set `cancelled` while the order is `pending` or `confirmed`
+        - **admin**: any valid transition
+
+        Invalid transitions return `409`.
+      operationId: updateOrderStatus
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderStatusUpdate'
+            example:
+              status: confirmed
+              note: Order accepted. Rider will pick up tomorrow morning.
+      responses:
+        '200':
+          description: The order with its new status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /orders/{orderId}/rider:
+    parameters:
+      - $ref: '#/components/parameters/OrderId'
+    patch:
+      tags: [Orders, Rider]
+      summary: Assign a rider to an order
+      description: Assigns a user with the `rider` role to an order. Allowed for the order's partner and admins.
+      operationId: assignRider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RiderAssignment'
+            example:
+              riderId: 665f1e5a9b1e8a0012a4b3d4
+      responses:
+        '200':
+          description: The order with the assigned rider.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /reviews:
+    get:
+      tags: [Reviews]
+      summary: List reviews
+      description: Returns a paginated list of reviews. Public route.
+      operationId: listReviews
+      security: []
+      parameters:
+        - name: partnerId
+          in: query
+          description: Only reviews for this partner.
+          schema:
+            $ref: '#/components/schemas/ObjectId'
+        - name: customerId
+          in: query
+          description: Only reviews written by this customer.
+          schema:
+            $ref: '#/components/schemas/ObjectId'
+        - name: minRating
+          in: query
+          description: Only reviews with a rating at or above this value.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 5
+        - name: sort
+          in: query
+          description: Sort order.
+          schema:
+            type: string
+            enum: [createdAt, -createdAt, rating, -rating]
+            default: -createdAt
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of reviews.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    post:
+      tags: [Reviews]
+      summary: Write a review
+      description: |
+        Posts a rating and comment for a partner after an order. **Customer role only.**
+        The order must belong to the caller, be `completed`, and not yet reviewed.
+      operationId: createReview
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewInput'
+            example:
+              orderId: 665f3c8d9b1e8a0012a4b6f3
+              rating: 5
+              comment: Fast pickup and the clothes smelled great.
+      responses:
+        '201':
+          description: Review created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Review'
+              example:
+                id: 665f4d9e9b1e8a0012a4b7a8
+                customerId: 665f1c2e9b1e8a0012a4b3c1
+                partnerId: 665f2a7b9b1e8a0012a4b4d2
+                orderId: 665f3c8d9b1e8a0012a4b6f3
+                rating: 5
+                comment: Fast pickup and the clothes smelled great.
+                createdAt: '2026-11-07T10:00:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /reviews/{reviewId}:
+    parameters:
+      - $ref: '#/components/parameters/ReviewId'
+    get:
+      tags: [Reviews]
+      summary: Get a review by ID
+      description: Returns one review. Public route.
+      operationId: getReview
+      security: []
+      responses:
+        '200':
+          description: The review.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Review'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Reviews]
+      summary: Update a review
+      description: Edits the rating or comment of a review. Allowed for the author and admins.
+      operationId: updateReview
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewUpdate'
+            example:
+              rating: 4
+              comment: Good service, delivery was 30 minutes late.
+      responses:
+        '200':
+          description: The updated review.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Review'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    delete:
+      tags: [Reviews]
+      summary: Delete a review
+      description: Removes a review and recalculates the partner's average rating. Allowed for the author and admins.
+      operationId: deleteReview
+      responses:
+        '204':
+          description: Review deleted. No content.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT returned by `POST /auth/login`. Send it as `Authorization Bearer <token>`.
+
+  parameters:
+    Page:
+      name: page
+      in: query
+      description: Page number, starting at 1.
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    Limit:
+      name: limit
+      in: query
+      description: Number of items per page (maximum 100).
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 10
+    UserId:
+      name: userId
+      in: path
+      required: true
+      description: Unique ID of the user.
+      schema:
+        $ref: '#/components/schemas/ObjectId'
+    PartnerId:
+      name: partnerId
+      in: path
+      required: true
+      description: Unique ID of the partner laundromat.
+      schema:
+        $ref: '#/components/schemas/ObjectId'
+    ServiceId:
+      name: serviceId
+      in: path
+      required: true
+      description: Unique ID of the service.
+      schema:
+        $ref: '#/components/schemas/ObjectId'
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      description: Unique ID of the order.
+      schema:
+        $ref: '#/components/schemas/ObjectId'
+    ReviewId:
+      name: reviewId
+      in: path
+      required: true
+      description: Unique ID of the review.
+      schema:
+        $ref: '#/components/schemas/ObjectId'
+
+  responses:
+    BadRequest:
+      description: The request is malformed (invalid JSON, bad ID format, or bad query value).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            status: 400
+            error: Bad Request
+            message: Invalid ID format.
+    Unauthorized:
+      description: Missing, expired, or invalid token, or wrong credentials.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            status: 401
+            error: Unauthorized
+            message: Authentication token is missing or invalid.
+    Forbidden:
+      description: The caller's role or ownership does not allow this action.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            status: 403
+            error: Forbidden
+            message: You do not have permission to perform this action.
+    NotFound:
+      description: The requested resource does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            status: 404
+            error: Not Found
+            message: Order not found.
+    Conflict:
+      description: The request conflicts with the current state (duplicate record or invalid status change).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            status: 409
+            error: Conflict
+            message: Cannot change status from completed to pending.
+    ValidationError:
+      description: The body is well-formed JSON but fails validation rules.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationError'
+          example:
+            status: 422
+            error: Unprocessable Entity
+            message: Validation failed.
+            details:
+              - field: email
+                message: Must be a valid email address.
+              - field: password
+                message: Must be at least 8 characters.
+
+  schemas:
+    ObjectId:
+      type: string
+      pattern: '^[a-f0-9]{24}$'
+      description: MongoDB ObjectId as a 24-character hex string.
+      example: 665f1c2e9b1e8a0012a4b3c1
+
+    Role:
+      type: string
+      enum: [customer, partner, rider, admin]
+      description: Role of a user. A user has exactly one role.
+
+    ServiceType:
+      type: string
+      enum: [wash, dry, fold]
+
+    OrderStatus:
+      type: string
+      enum: [pending, confirmed, inprogress, completed, cancelled]
+
+    Location:
+      type: object
+      description: A street address with map coordinates.
+      required: [street, city]
+      properties:
+        street:
+          type: string
+          example: Corrales Ave, Brgy. Carmen
+        city:
+          type: string
+          example: Cagayan de Oro
+        latitude:
+          type: number
+          format: double
+          minimum: -90
+          maximum: 90
+          example: 8.4822
+        longitude:
+          type: number
+          format: double
+          minimum: -180
+          maximum: 180
+          example: 124.6472
+
+    PageMeta:
+      type: object
+      required: [page, limit, total, totalPages]
+      properties:
+        page:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 10
+        total:
+          type: integer
+          example: 42
+        totalPages:
+          type: integer
+          example: 5
+
+    Error:
+      type: object
+      required: [status, error, message]
+      properties:
+        status:
+          type: integer
+          example: 404
+        error:
+          type: string
+          example: Not Found
+        message:
+          type: string
+          example: Order not found.
+
+    ValidationError:
+      allOf:
+        - $ref: '#/components/schemas/Error'
+        - type: object
+          properties:
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                    example: email
+                  message:
+                    type: string
+                    example: Must be a valid email address.
+
+    RegisterRequest:
+      type: object
+      required: [role, name, email, password]
+      properties:
+        role:
+          type: string
+          enum: [customer, partner, rider]
+          description: Role to register as. `admin` cannot be self-registered.
+        name:
+          type: string
+          minLength: 2
+          maxLength: 100
+          example: Maria Santos
+        email:
+          type: string
+          format: email
+          example: maria.santos@xu.edu.ph
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: Str0ngPass!23
+        address:
+          $ref: '#/components/schemas/Location'
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: maria.santos@xu.edu.ph
+        password:
+          type: string
+          format: password
+          example: Str0ngPass!23
+
+    AuthResponse:
+      type: object
+      required: [token, user]
+      properties:
+        token:
+          type: string
+          description: JWT to send in the Authorization header.
+        user:
+          $ref: '#/components/schemas/User'
+
+    User:
+      type: object
+      description: A user account. The password hash is never returned.
+      required: [id, role, name, email]
+      properties:
+        id:
+          $ref: '#/components/schemas/ObjectId'
+        role:
+          $ref: '#/components/schemas/Role'
+        name:
+          type: string
+          example: Maria Santos
+        email:
+          type: string
+          format: email
+          example: maria.santos@xu.edu.ph
+        address:
+          $ref: '#/components/schemas/Location'
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+
+    UserUpdate:
+      type: object
+      description: Fields that can be changed. Send only the fields you want to update.
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 100
+        password:
+          type: string
+          format: password
+          minLength: 8
+        address:
+          $ref: '#/components/schemas/Location'
+        role:
+          $ref: '#/components/schemas/Role'
+
+    UserList:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/User'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+
+    Partner:
+      type: object
+      required: [id, userId, businessName, location]
+      properties:
+        id:
+          $ref: '#/components/schemas/ObjectId'
+        userId:
+          $ref: '#/components/schemas/ObjectId'
+        businessName:
+          type: string
+          example: Bubble Express Laundry
+        description:
+          type: string
+          example: Wash, dry, and fold near XU main gate.
+        location:
+          $ref: '#/components/schemas/Location'
+        rating:
+          type: number
+          minimum: 0
+          maximum: 5
+          readOnly: true
+          description: Average rating, calculated from reviews.
+          example: 4.6
+        ratingCount:
+          type: integer
+          readOnly: true
+          example: 38
+        isApproved:
+          type: boolean
+          description: Set to true by an admin after review.
+          example: true
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+
+    PartnerInput:
+      type: object
+      required: [businessName, location]
+      properties:
+        businessName:
+          type: string
+          minLength: 2
+          maxLength: 120
+          example: Bubble Express Laundry
+        description:
+          type: string
+          maxLength: 500
+        location:
+          $ref: '#/components/schemas/Location'
+        isApproved:
+          type: boolean
+          description: Admin only. Ignored for other roles.
+
+    PartnerList:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Partner'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+
+    Service:
+      type: object
+      required: [id, partnerId, type, name, price]
+      properties:
+        id:
+          $ref: '#/components/schemas/ObjectId'
+        partnerId:
+          $ref: '#/components/schemas/ObjectId'
+        type:
+          $ref: '#/components/schemas/ServiceType'
+        name:
+          type: string
+          example: Wash per kilo
+        price:
+          type: number
+          minimum: 0
+          description: Price in PHP per unit.
+          example: 45
+        unit:
+          type: string
+          enum: [kg, piece, load]
+          default: kg
+        isAvailable:
+          type: boolean
+          default: true
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+
+    ServiceInput:
+      type: object
+      required: [type, name, price]
+      properties:
+        type:
+          $ref: '#/components/schemas/ServiceType'
+        name:
+          type: string
+          minLength: 2
+          maxLength: 100
+          example: Wash per kilo
+        price:
+          type: number
+          minimum: 0
+          example: 45
+        unit:
+          type: string
+          enum: [kg, piece, load]
+          default: kg
+        isAvailable:
+          type: boolean
+          default: true
+
+    ServiceList:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Service'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+
+    OrderItem:
+      type: object
+      description: An item embedded in an order. Price and name are copied from the service at booking time.
+      required: [serviceId, quantity]
+      properties:
+        serviceId:
+          $ref: '#/components/schemas/ObjectId'
+        type:
+          $ref: '#/components/schemas/ServiceType'
+        name:
+          type: string
+          example: Wash per kilo
+        description:
+          type: string
+          example: Mixed clothes
+        quantity:
+          type: number
+          minimum: 0.5
+          example: 4
+        unitPrice:
+          type: number
+          minimum: 0
+          example: 45
+        subtotal:
+          type: number
+          minimum: 0
+          example: 180
+
+    OrderItemInput:
+      type: object
+      required: [serviceId, quantity]
+      properties:
+        serviceId:
+          $ref: '#/components/schemas/ObjectId'
+        description:
+          type: string
+          maxLength: 200
+          example: Mixed clothes
+        quantity:
+          type: number
+          minimum: 0.5
+          example: 4
+
+    Order:
+      type: object
+      required: [id, customerId, partnerId, items, pickupDate, deliveryDate, status, totalPrice]
+      properties:
+        id:
+          $ref: '#/components/schemas/ObjectId'
+        customerId:
+          $ref: '#/components/schemas/ObjectId'
+        partnerId:
+          $ref: '#/components/schemas/ObjectId'
+        riderId:
+          allOf:
+            - $ref: '#/components/schemas/ObjectId'
+          nullable: true
+          description: Assigned rider, or null if none yet.
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        pickupDate:
+          type: string
+          format: date-time
+        deliveryDate:
+          type: string
+          format: date-time
+        pickupAddress:
+          $ref: '#/components/schemas/Location'
+        specialInstructions:
+          type: string
+          maxLength: 500
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        totalPrice:
+          type: number
+          minimum: 0
+          readOnly: true
+          example: 180
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+
+    OrderCreate:
+      type: object
+      required: [partnerId, items, pickupDate, deliveryDate, pickupAddress]
+      properties:
+        partnerId:
+          $ref: '#/components/schemas/ObjectId'
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/OrderItemInput'
+        pickupDate:
+          type: string
+          format: date-time
+        deliveryDate:
+          type: string
+          format: date-time
+          description: Must be later than `pickupDate`.
+        pickupAddress:
+          $ref: '#/components/schemas/Location'
+        specialInstructions:
+          type: string
+          maxLength: 500
+
+    OrderUpdate:
+      type: object
+      required: [items, pickupDate, deliveryDate, pickupAddress]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/OrderItemInput'
+        pickupDate:
+          type: string
+          format: date-time
+        deliveryDate:
+          type: string
+          format: date-time
+        pickupAddress:
+          $ref: '#/components/schemas/Location'
+        specialInstructions:
+          type: string
+          maxLength: 500
+
+    OrderStatusUpdate:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        note:
+          type: string
+          maxLength: 300
+          description: Optional note shown in the customer's tracking view.
+
+    RiderAssignment:
+      type: object
+      required: [riderId]
+      properties:
+        riderId:
+          $ref: '#/components/schemas/ObjectId'
+
+    OrderList:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Order'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+
+    Review:
+      type: object
+      required: [id, customerId, partnerId, orderId, rating]
+      properties:
+        id:
+          $ref: '#/components/schemas/ObjectId'
+        customerId:
+          $ref: '#/components/schemas/ObjectId'
+        partnerId:
+          $ref: '#/components/schemas/ObjectId'
+        orderId:
+          $ref: '#/components/schemas/ObjectId'
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+          example: 5
+        comment:
+          type: string
+          maxLength: 1000
+          example: Fast pickup and the clothes smelled great.
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+
+    ReviewInput:
+      type: object
+      required: [orderId, rating]
+      properties:
+        orderId:
+          $ref: '#/components/schemas/ObjectId'
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        comment:
+          type: string
+          maxLength: 1000
+
+    ReviewUpdate:
+      type: object
+      properties:
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        comment:
+          type: string
+          maxLength: 1000
+
+    ReviewList:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Review'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
